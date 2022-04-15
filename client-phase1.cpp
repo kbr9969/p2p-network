@@ -296,9 +296,9 @@ int main(int argc, char *argv[])
             }
         }
         sort(this_node.files.begin(),this_node.files.end());
-        for(string s1:this_node.files)[
+        for(string s1:this_node.files){
             cout<<s1<<endl;
-        ]
+        }
     }
     thread th_server(server);
     thread th_client(client);
