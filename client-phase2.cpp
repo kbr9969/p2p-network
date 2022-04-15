@@ -43,10 +43,9 @@ string allfiles="";
 
 char *to_charS(string s)
 {
-    char *c = const_cast<char *>(s.c_str());
+    char *c = strcpy(new char[s.length() + 1], s.c_str());
     return c;
 }
-
 string to_cppString(char *c)
 {
     string s = "";

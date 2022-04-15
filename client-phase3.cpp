@@ -431,12 +431,12 @@ void client()
                 // {
                 //     cerr << "ERROR: While saving to file\n";
                 // };
-                fwrite(&buffer, sizeof(char), min(R, file_data_len - received), fp);
+                fwrite(&buffer, sizeof(char), min(R,file_data_len-received), fp);
                 data_received += R;
                 memset(buffer, 0, sizeof(buffer));
                 received += R;
             }
-            cout << file_name << " " << received << " " << file_data_len << endl;
+           // cout << file_name << " " << received << " " << file_data_len << endl;
             if (received >= file_data_len)
             {
                 // printf("%sFile Length:%s nbytes %s%s%s\n", KRED, RESET, KGRN, TICK,
