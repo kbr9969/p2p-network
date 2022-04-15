@@ -42,9 +42,10 @@ node this_node;
 
 char *to_charS(string s)
 {
-    char *c = strcpy(new char[s.length() + 1], s.c_str());
+    char *c = const_cast<char *>(s.c_str());
     return c;
 }
+
 string to_cppString(char *c)
 {
     string s = "";
@@ -280,7 +281,7 @@ int main(int argc, char *argv[])
     {
         myfile >> req_files[i];
     }
-
+    sort(req_files.begin(),req_files.end());
     // pringting files
     DIR *dir;
     struct dirent *file;

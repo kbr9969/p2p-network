@@ -15,12 +15,11 @@
 #include <thread>
 #include <sys/wait.h>
 
-
 using namespace std;
 // Macros**************************************************************************************************
 
 #define BACKLOG 100     // how many pending connections queue will hold
-#define MAXDATASIZE 100 // max number of bytes we can get at once
+#define MAXDATASIZE 1000 // max number of bytes we can get at once
 
 // ******************************************************************************************************************
 
@@ -36,16 +35,17 @@ struct node
 vector<string> req_files;
 vector<node> adj;
 node this_node;
-string allfiles="";
+string allfiles = "";
 //*********************************************************************************************************************
 
 //****Helper functions***********************************************************************************************
 
 char *to_charS(string s)
 {
-    char *c = strcpy(new char[s.length() + 1], s.c_str());
+    char *c = const_cast<char *>(s.c_str());
     return c;
 }
+
 string to_cppString(char *c)
 {
     string s = "";
@@ -167,12 +167,12 @@ void server()
         inet_ntop(their_addr.ss_family,
                   get_in_addr((struct sockaddr *)&their_addr),
                   s, sizeof s);
-       // printf("server: got connection from %s\n", s);
+        // printf("server: got connection from %s\n", s);
 
         if (!fork())
         {                  // this is the child process
             close(sockfd); // child doesn't need the listener
-            string s = to_string(this_node.id)+","+allfiles;
+            string s = to_string(this_node.id) + "," + allfiles;
             const void *info = s.c_str();
             if (send(new_fd, info, s.length(), 0) == -1)
                 perror("send");
@@ -187,7 +187,8 @@ void server()
 //*******CLIENT********************************************************************************
 void client()
 {
-    map<string,vector<pair<pair<int,int>,int>>> m; //{{uniqueID,s_no},port}
+    map<string, vector<pair<pair<int, int>, int>>> m; //{{uniqueID,s_no},port}
+    map<int, pair<int, int>> conn;                    //{s_no,{id,port}}
     for (int i = 0; i < adj.size(); i++)
     {
         const char *PORT = to_charS(to_string(adj[i].lis_port));
@@ -235,9 +236,10 @@ void client()
             //     exit(2);
             // }
         }
+        //cout<<"out of while"<<endl;
         inet_ntop(p->ai_family, get_in_addr((struct sockaddr *)p->ai_addr),
                   s, sizeof s);
-       // printf("client: connecting to %s\n", s);
+        // printf("client: connecting to %s\n", s);
 
         freeaddrinfo(servinfo); // all done with this structure
 
@@ -246,51 +248,71 @@ void client()
             perror("recv");
             exit(1);
         }
-
+        //cout<<"received "<<i<<endl;
         buf[numbytes] = '\0';
         string buffs = to_cppString(buf);
-        string po="";
-        int ind=0;
-        while(buffs[ind]!=','){
-            po+=buffs[ind];
+        string po = "";
+        int ind = 0;
+        while (buffs[ind] != ',')
+        {
+            po += buffs[ind];
             ind++;
         }
-        for(int j=ind+1;j<buffs.length();){
-            if(buffs[j]==',') {
+        conn[adj[i].s_no] = {stoi(po), adj[i].lis_port};
+       // cout<<buffs.length()<<" "<<buffs<<endl;
+        for (int j = ind + 1; j < buffs.length();)
+        {
+            //cout<<j<<endl;
+            if (buffs[j] == ',')
+            {
+                j++;
+                continue;
+            }
+            string filename = "";
+            while (buffs[j] != ',')
+            {
+                filename += buffs[j];
                 j++;
             }
-            if(!(j<buffs.length())) break;
-            string filename="";
-            while(buffs[j]!=','){
-                filename+=buffs[j];
-                j++;
-            }
-           // cout<<"server"<<adj[i].s_no<<" "<<buffs<<endl;
-            int isthere=0;
-            for(int k=0;k<req_files.size();k++){
-                if(req_files[k]==filename){
-                    isthere=1;
+            // cout<<"server"<<adj[i].s_no<<" "<<buffs<<endl;
+            int isthere = 0;
+            for (int k = 0; k < req_files.size(); k++)
+            {
+                if (req_files[k] == filename)
+                {
+                    isthere = 1;
                 }
             }
-            if(isthere){
-                m[filename].push_back({{stoi(po),i},adj[i].lis_port});
+            if (isthere)
+            {
+                m[filename].push_back({{stoi(po), i}, adj[i].lis_port});
             }
         }
-        //m[adj[i].s_no] = {stoi(buffs), adj[i].lis_port};
+       // cout<<"after for"<<endl;
+        // m[adj[i].s_no] = {stoi(buffs), adj[i].lis_port};
 
         close(sockfd);
     }
-    for(auto x:m){
-        //cout<<"in map "<<x.first<<endl;
-        sort(m[x.first].begin(),m[x.first].end());
+    //cout<<conn.size()<<endl;
+    for (auto p : conn)
+    {
+        cout << "Connected to " << p.first << " with unique-ID " << p.second.first << " on port " << p.second.second << endl;
     }
-    for(string s1:req_files){
-        //cout<<"in files "<<s1<<endl;
-        if(m[s1].size()!=0){
-            cout<<"Found "<<s1<<" at "<<m[s1][0].first.first<<" with MD5 0 at depth 1"<<endl;
+    for (auto x : m)
+    {
+        // cout<<"in map "<<x.first<<endl;
+        sort(m[x.first].begin(), m[x.first].end());
+    }
+    for (string s1 : req_files)
+    {
+        // cout<<"in files "<<s1<<endl;
+        if (m[s1].size() != 0)
+        {
+            cout << "Found " << s1 << " at " << m[s1][0].first.first << " with MD5 0 at depth 1" << endl;
         }
-        else{
-            cout<<"Found "<<s1<<" at 0 with MD5 0 at depth 0"<<endl;
+        else
+        {
+            cout << "Found " << s1 << " at 0 with MD5 0 at depth 0" << endl;
         }
     }
     return;
@@ -318,7 +340,7 @@ int main(int argc, char *argv[])
     {
         myfile >> req_files[i];
     }
-
+    sort(req_files.begin(), req_files.end());
     // pringting files
     DIR *dir;
     struct dirent *file;
@@ -329,11 +351,16 @@ int main(int argc, char *argv[])
             if (file->d_type == DT_REG)
             {
                 string s = file->d_name;
-                //cout << s << endl;
-                allfiles+=s;
-                allfiles+=",";
+                // cout << s << endl;
+                allfiles += s;
+                allfiles += ",";
                 this_node.files.push_back(s);
             }
+        }
+        sort(this_node.files.begin(), this_node.files.end());
+        for (string s1 : this_node.files)
+        {
+            cout << s1 << endl;
         }
     }
     thread th_server(server);

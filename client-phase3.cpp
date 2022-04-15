@@ -15,13 +15,15 @@
 #include <thread>
 #include <sys/wait.h>
 #include <sys/stat.h>
+#include <openssl/md5.h>
+#include <filesystem>
 
 using namespace std;
 // Macros**************************************************************************************************
 
-#define BACKLOG 100     // how many pending connections queue will hold
-#define MAXDATASIZE 100 // max number of bytes we can get at once
-const int MAX_BUFFER_LEN = 1024;
+#define BACKLOG 100      // how many pending connections queue will hold
+#define MAXDATASIZE 1000 // max number of bytes we can get at once
+const int MAX_BUFFER_LEN = 5000;
 const int MAX_PACKET_CHUNK_LEN = 1024;
 // ******************************************************************************************************************
 
@@ -46,6 +48,7 @@ string curr_dir;
 char *to_charS(string s)
 {
     char *c = strcpy(new char[s.length() + 1], s.c_str());
+    // cout<<c<<endl;
     return c;
 }
 
@@ -60,6 +63,7 @@ string to_cppString(char *c)
     }
     return s;
 }
+
 //*********************************************************************************************************************
 void sigchld_handler(int s)
 {
@@ -95,6 +99,35 @@ bool IsPathExist(const std::string &s)
 {
     struct stat buffer;
     return (stat(s.c_str(), &buffer) == 0);
+}
+string getmd5(char *file_path)
+{
+    FILE *inFile = fopen(file_path, "rb");
+    unsigned char c[MD5_DIGEST_LENGTH];
+    int i;
+    MD5_CTX mdContext;
+    int bytes;
+    unsigned char data[1024];
+
+    if (inFile == NULL)
+    {
+        cout << "can't be opened(md5 func).\n";
+        exit(1);
+    }
+
+    MD5_Init(&mdContext);
+    while ((bytes = fread(data, 1, 1024, inFile)) != 0)
+        MD5_Update(&mdContext, data, bytes);
+    MD5_Final(c, &mdContext);
+    string res = "";
+    char buf[2 * MD5_DIGEST_LENGTH];
+    for (i = 0; i < MD5_DIGEST_LENGTH; i++)
+    {
+        sprintf(buf, "%02x", c[i]);
+        res.append(buf);
+    }
+    fclose(inFile);
+    return res;
 }
 //******SERVER*****************************************************************************************************
 void server()
@@ -189,8 +222,12 @@ void server()
         {                  // this is the child process
             close(sockfd); // child doesn't need the listener
             string s = to_string(this_node.id) + "," + allfiles;
+            char buff[MAX_BUFFER_LEN + 3];
+            memset(buff, 0, sizeof(buff));
+            char *c3 = to_charS(s);
+            strcat(buff, c3);
             const void *info = s.c_str();
-            if (send(new_fd, info, s.length(), 0) == -1)
+            if (send(new_fd, buff, MAX_PACKET_CHUNK_LEN, 0) == -1)
                 perror("send");
             // char file_name[MAXDATASIZE];
             // int num{};
@@ -271,11 +308,15 @@ void client()
 {
     map<string, vector<pair<int, string>>> m; //{uniqueID,md5}
     vector<string> added;
+    map<int, pair<int, int>> conn;             //{s_no,{id,port}}
+    vector<pair<string, pair<string, int>>> v; //{path,filename}
+    int xx = 0;
     for (int i = 0; i < adj.size(); i++)
     {
+        // cout<<i<<endl;
         const char *PORT = to_charS(to_string(adj[i].lis_port));
         int sockfd, numbytes;
-        char buf[MAXDATASIZE];
+        char buf[MAX_BUFFER_LEN];
         struct addrinfo hints, *servinfo, *p = NULL;
         int rv;
         char s[INET6_ADDRSTRLEN];
@@ -324,7 +365,7 @@ void client()
 
         freeaddrinfo(servinfo); // all done with this structure
 
-        if ((numbytes = recv(sockfd, buf, MAXDATASIZE - 1, 0)) == -1)
+        if ((numbytes = recv(sockfd, buf, MAX_PACKET_CHUNK_LEN, 0)) == -1)
         {
             cout << "client" << this_node.s_no << " ";
             perror("recv");
@@ -340,41 +381,33 @@ void client()
             po += buffs[ind];
             ind++;
         }
+        // cout << buffs << endl;
+        //  cout<<i<<endl;
+        conn[adj[i].s_no] = {stoi(po), adj[i].lis_port};
         int tot{};
         for (int j = ind + 1; j < buffs.length();)
         {
             if (buffs[j] == ',')
             {
                 j++;
+                continue;
             }
-            if (!(j < buffs.length()))
-                break;
             string filename = "";
             while (buffs[j] != ',')
             {
                 filename += buffs[j];
                 j++;
             }
+            // cout<<filename<<endl;
             tot++;
             // cout<<"server"<<adj[i].s_no<<" "<<buffs<<endl;
-            int isthere = 0;
-            for (int k = 0; k < req_files.size(); k++)
-            {
-                if (req_files[k] == filename)
-                {
-                    isthere = 1;
-                }
-            }
-            if (isthere)
-            {
-                string md5_hash = "#md5sum";
-                m[filename].push_back({stoi(po), md5_hash});
-            }
         }
         // m[adj[i].s_no] = {stoi(buffs), adj[i].lis_port};
+        // cout<<i<<endl;
         for (int j = 0; j < tot; j++)
         {
-            char buffer[MAX_BUFFER_LEN + 4];
+            // cout<<i<<" "<<j<<endl;
+            char buffer[MAX_BUFFER_LEN];
             char file_name[MAX_BUFFER_LEN];
             int file_data_len;
 
@@ -393,12 +426,14 @@ void client()
             strncpy(file_name, ch, strlen(ch));
             strcat(file_name, "\0");
             ch = strtok_r(NULL, " ,", &end_pointer);
+            string filename = to_cppString(file_name);
             file_data_len = atoi(ch);
             // printf("%sFileName: %s%s\n", KRED, RESET, file_name);
             // printf("%sFilesize: %s%d bytes\n", KRED, RESET, file_data_len);
 
             /* Create File */
             string dir = curr_dir + "Downloaded";
+
             if (!IsPathExist(dir))
             {
                 int check = mkdir(to_charS(dir), 0777);
@@ -410,8 +445,24 @@ void client()
                     exit(1);
                 }
             }
-            char *file_path = to_charS(dir + "/" + to_cppString(file_name));
+            char *file_path;
+            int downl = 0;
+            for (string s2 : req_files)
+            {
+                if (s2 == filename)
+                    downl = 1;
+            }
+            if (downl)
+            {
+                file_path = to_charS(dir + "/" + to_cppString(file_name));
+            }
+            else
+            {
+                xx = 1;
+                file_path = to_charS("rem");
+            }
             FILE *fp = fopen(file_path, "wb+");
+            // cout<<file_path<<endl;
             if (fp == NULL)
             {
                 printf("File open error");
@@ -431,12 +482,13 @@ void client()
                 // {
                 //     cerr << "ERROR: While saving to file\n";
                 // };
-                fwrite(&buffer, sizeof(char), min(R,file_data_len-received), fp);
+
+                fwrite(&buffer, sizeof(char), min(R, file_data_len - received), fp);
                 data_received += R;
                 memset(buffer, 0, sizeof(buffer));
                 received += R;
             }
-           // cout << file_name << " " << received << " " << file_data_len << endl;
+            // cout << file_name << " " << received << " " << file_data_len << endl;
             if (received >= file_data_len)
             {
                 // printf("%sFile Length:%s nbytes %s%s%s\n", KRED, RESET, KGRN, TICK,
@@ -451,29 +503,53 @@ void client()
                 // exit(1);
             }
             added.push_back(to_cppString(file_name));
+            v.push_back({to_cppString(file_path), {filename, stoi(po)}});
             fclose(fp);
         }
-
+        // cout<<i<<endl;
         close(sockfd);
     }
-
-    for (string s : added)
+    for (auto p : v)
     {
-        int isreq = 0;
-        for (int j = 0; j < req_files.size(); j++)
+        string filename = p.second.first, fp = p.first;
+        int po = p.second.second;
+        char *file_path = to_charS(fp);
+        FILE *fp1 = fopen(file_path, "rb");
+        int isthere = 0;
+        for (int k = 0; k < req_files.size(); k++)
         {
-            if (req_files[j] == s)
-                isreq = 1;
-        }
-        if (!isreq)
-        {
-            string dir = curr_dir + "Downloaded";
-            char *file_path = to_charS(dir + "/" + s);
-            if (unlink(file_path) != 0)
+            if (req_files[k] == filename)
             {
-                cerr << "Error in removing files" << endl;
+                isthere = 1;
+            }
+        }
+        if (isthere)
+        {
+            string md5_hash = getmd5(file_path);
+            m[filename].push_back({po, md5_hash});
+        }
+    }
+    for (auto p : conn)
+    {
+        cout << "Connected to " << p.first << " with unique-ID " << p.second.first << " on port " << p.second.second << endl;
+    }
+   // cout << xx << endl;
+    if (xx)
+    {
+        char *file_path = to_charS("./rem");
+        string ss="rem";
+        if (IsPathExist(ss))
+        {
+            int x = unlink(file_path);
+            if (x != 0)
+            {
+                cerr << file_path << " Error in removing files" << endl;
                 exit(1);
             }
+        }
+        else{
+            cerr<<"IsPathExist error"<<endl;
+            exit(1);
         }
     }
 
@@ -504,6 +580,7 @@ int main(int argc, char *argv[])
 {
     string config_file = to_cppString(argv[1]);
     curr_dir = to_cppString(argv[2]);
+    // cout<<curr_dir<<endl;
     fstream myfile;
     myfile.open(config_file, ios::in);
     myfile >> this_node.s_no >> this_node.lis_port >> this_node.id;
@@ -521,7 +598,7 @@ int main(int argc, char *argv[])
     {
         myfile >> req_files[i];
     }
-
+    sort(req_files.begin(), req_files.end());
     // pringting files
     DIR *dir;
     struct dirent *file;
@@ -537,6 +614,11 @@ int main(int argc, char *argv[])
                 allfiles += ",";
                 this_node.files.push_back(s);
             }
+        }
+        sort(this_node.files.begin(), this_node.files.end());
+        for (string s1 : this_node.files)
+        {
+            cout << s1 << endl;
         }
     }
     thread th_server(server);

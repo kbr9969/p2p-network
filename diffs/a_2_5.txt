@@ -1,0 +1,4 @@
+9c9
+< Found foo.png at 1939 with MD5 f3470bb89e3838dece43e56003e3ae1f at depth 2
+---
+> Found foo.png at 1939 with MD5 ca53850928986a8cc03d414309142d32 at depth 2

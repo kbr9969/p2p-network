@@ -1,0 +1,11 @@
+file.cpp
+go.sh
+lab4db.ddl
+opda.txt
+oppk.txt
+queries
+ra.txt
+rafinal
+run.sh
+temp.c
+temp2.cpp

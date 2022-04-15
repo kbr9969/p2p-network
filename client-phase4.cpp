@@ -15,13 +15,13 @@
 #include <thread>
 #include <sys/wait.h>
 
-
 using namespace std;
 // Macros**************************************************************************************************
 
-#define BACKLOG 100     // how many pending connections queue will hold
-#define MAXDATASIZE 100 // max number of bytes we can get at once
-
+#define BACKLOG 100      // how many pending connections queue will hold
+#define MAXDATASIZE 1000 // max number of bytes we can get at once
+const int MAX_BUFFER_LEN = 5000;
+const int MAX_PACKET_CHUNK_LEN = 1024;
 // ******************************************************************************************************************
 
 // Global variables**************************************************************************************************
@@ -36,15 +36,15 @@ struct node
 vector<string> req_files;
 vector<node> adj;
 node this_node;
-string allfiles="";
-string allns="";
+string allfiles = "";
+string allns = "";
 //*********************************************************************************************************************
 
 //****Helper functions***********************************************************************************************
 
 char *to_charS(string s)
 {
-    char *c = const_cast<char *>(s.c_str());
+    char *c = strcpy(new char[s.length() + 1], s.c_str());
     return c;
 }
 
@@ -165,18 +165,21 @@ void server()
             perror("accept");
             continue;
         }
-
         inet_ntop(their_addr.ss_family,
                   get_in_addr((struct sockaddr *)&their_addr),
                   s, sizeof s);
-       // printf("server: got connection from %s\n", s);
+        // printf("server: got connection from %s\n", s);
 
         if (!fork())
         {                  // this is the child process
             close(sockfd); // child doesn't need the listener
-            string s = to_string(this_node.id)+","+allfiles+"|"+allns;
+            string s = to_string(this_node.id) + "," + allfiles + "|" + allns;
+            char buff[MAX_BUFFER_LEN + 3];
+            memset(buff, 0, sizeof(buff));
+            char* c3=to_charS(s);
+            strcat(buff, c3);
             const void *info = s.c_str();
-            if (send(new_fd, info, s.length(), 0) == -1)
+            if (send(new_fd, buff,MAX_PACKET_CHUNK_LEN , 0) == -1)
                 perror("send");
             close(new_fd);
             exit(0);
@@ -189,11 +192,12 @@ void server()
 //*******CLIENT********************************************************************************
 void client()
 {
-    map<string,vector<int>> m1; //vector of {uniqueID}'s
-    map<string,vector<int>> m2;
-    
+    map<string, vector<int>> m1; // vector of {uniqueID}'s
+    map<string, vector<int>> m2;
+    map<int, pair<int, int>> conn;
     set<int> ports1;
-    for(int i=0;i<adj.size();i++){
+    for (int i = 0; i < adj.size(); i++)
+    {
         ports1.insert(adj[i].lis_port);
     }
     vector<int> ports2;
@@ -201,7 +205,7 @@ void client()
     {
         const char *PORT = to_charS(to_string(adj[i].lis_port));
         int sockfd, numbytes;
-        char buf[MAXDATASIZE];
+        char buf[MAX_BUFFER_LEN];
         struct addrinfo hints, *servinfo, *p = NULL;
         int rv;
         char s[INET6_ADDRSTRLEN];
@@ -246,11 +250,11 @@ void client()
         }
         inet_ntop(p->ai_family, get_in_addr((struct sockaddr *)p->ai_addr),
                   s, sizeof s);
-       // printf("client: connecting to %s\n", s);
+        // printf("client: connecting to %s\n", s);
 
         freeaddrinfo(servinfo); // all done with this structure
 
-        if ((numbytes = recv(sockfd, buf, MAXDATASIZE - 1, 0)) == -1)
+        if ((numbytes = recv(sockfd, buf, MAX_PACKET_CHUNK_LEN, 0)) == -1)
         {
             perror("recv");
             exit(1);
@@ -258,55 +262,71 @@ void client()
 
         buf[numbytes] = '\0';
         string buffs = to_cppString(buf);
-        string po="";
-        int ind=0;
-        while(buffs[ind]!=','){
-            po+=buffs[ind];
+        string po = "";
+        int ind = 0;
+        while (buffs[ind] != ',')
+        {
+            po += buffs[ind];
             ind++;
         }
-       // cout<<"in 1: "<<buffs<<endl;
+        // cout<<"in 1: "<<buffs<<endl;
         ports1.insert(stoi(po));
-        for(int j=ind+1;j<buffs.length();){
-            if(buffs[j]==',') j++;
-            if(buffs[j]=='|') {
-                ind=j+1;
+        conn[adj[i].s_no] = {stoi(po), adj[i].lis_port};
+
+        for (int j = ind + 1; j < buffs.length();)
+        {
+            if (buffs[j] == ',')
+                j++;
+            if (buffs[j] == '|')
+            {
+                ind = j + 1;
                 break;
             }
-            string filename="";
-            while(buffs[j]!=','){
-                filename+=buffs[j];
+            string filename = "";
+            while (buffs[j] != ',')
+            {
+                filename += buffs[j];
                 j++;
             }
-           // cout<<"server"<<adj[i].s_no<<" "<<buffs<<endl;
-            int isthere=0;
-            for(int k=0;k<req_files.size();k++){
-                if(req_files[k]==filename){
-                    isthere=1;
+            // cout<<"server"<<adj[i].s_no<<" "<<buffs<<endl;
+            int isthere = 0;
+            for (int k = 0; k < req_files.size(); k++)
+            {
+                if (req_files[k] == filename)
+                {
+                    isthere = 1;
                 }
             }
-            if(isthere){
+            if (isthere)
+            {
                 m1[filename].push_back(stoi(po));
             }
         }
-        for(int j=ind;j<buffs.length();){
-            if(buffs[j]==',') j++;
-            if(!(j<buffs.length())) break;
-            string p1="";
-            while(buffs[j]!=','){
-                p1+=buffs[j];
+        for (int j = ind; j < buffs.length();)
+        {
+            if (buffs[j] == ',')
+                j++;
+            if (!(j < buffs.length()))
+                break;
+            string p1 = "";
+            while (buffs[j] != ',')
+            {
+                p1 += buffs[j];
                 j++;
             }
-            //cout<<po<<" "<<p1<<endl;
-            if((ports1.find(stoi(p1))==ports1.end())&&(stoi(p1)!=this_node.lis_port)){
+            // cout<<po<<" "<<p1<<endl;
+            if ((ports1.find(stoi(p1)) == ports1.end()) && (stoi(p1) != this_node.lis_port))
+            {
                 ports2.push_back(stoi(p1));
             }
         }
         close(sockfd);
     }
-    for(int i=0;i<ports2.size();i++){
+    for (int i = 0; i < ports2.size(); i++)
+    {
         const char *PORT = to_charS(to_string(ports2[i]));
         int sockfd, numbytes;
-        char buf[MAXDATASIZE];
+        char buf[MAX_BUFFER_LEN];
         struct addrinfo hints, *servinfo, *p = NULL;
         int rv;
         char s[INET6_ADDRSTRLEN];
@@ -351,11 +371,11 @@ void client()
         }
         inet_ntop(p->ai_family, get_in_addr((struct sockaddr *)p->ai_addr),
                   s, sizeof s);
-       // printf("client: connecting to %s\n", s);
+        // printf("client: connecting to %s\n", s);
 
         freeaddrinfo(servinfo); // all done with this structure
 
-        if ((numbytes = recv(sockfd, buf, MAXDATASIZE - 1, 0)) == -1)
+        if ((numbytes = recv(sockfd, buf, MAX_PACKET_CHUNK_LEN, 0)) == -1)
         {
             perror("recv");
             exit(1);
@@ -363,32 +383,40 @@ void client()
 
         buf[numbytes] = '\0';
         string buffs = to_cppString(buf);
-        string po=""; //uniqueID;
-        int ind=0;
-        while(buffs[ind]!=','){
-            po+=buffs[ind];
+        string po = ""; // uniqueID;
+        int ind = 0;
+        while (buffs[ind] != ',')
+        {
+            po += buffs[ind];
             ind++;
         }
-        //cout<<"in 2: "<<buffs<<endl;
-        for(int j=ind+1;j<buffs.length();){
-            if(buffs[j]==',') j++;
-            if(buffs[j]=='|') {
-                ind=j+1;
+        // cout<<"in 2: "<<buffs<<endl;
+        for (int j = ind + 1; j < buffs.length();)
+        {
+            if (buffs[j] == ',')
+                j++;
+            if (buffs[j] == '|')
+            {
+                ind = j + 1;
                 break;
             }
-            string filename="";
-            while(buffs[j]!=','){
-                filename+=buffs[j];
+            string filename = "";
+            while (buffs[j] != ',')
+            {
+                filename += buffs[j];
                 j++;
             }
-           // cout<<"server"<<adj[i].s_no<<" "<<buffs<<endl;
-            int isthere=0;
-            for(int k=0;k<req_files.size();k++){
-                if(req_files[k]==filename){
-                    isthere=1;
+            // cout<<"server"<<adj[i].s_no<<" "<<buffs<<endl;
+            int isthere = 0;
+            for (int k = 0; k < req_files.size(); k++)
+            {
+                if (req_files[k] == filename)
+                {
+                    isthere = 1;
                 }
             }
-            if(isthere){
+            if (isthere)
+            {
                 m2[filename].push_back(stoi(po));
             }
         }
@@ -396,24 +424,37 @@ void client()
         close(sockfd);
     }
     set<string> strs;
-    map<string,pair<int,int>> op; //{uniqueID,depth}
-    for(auto X:m1){
-        string s1=X.first;
-        strs.insert(s1);
-        sort(m1[s1].begin(),m1[s1].end());
-        //cout<<"Found "+s1+" at "+m1[s1][0]<<" with MD5 0 at depth 1"<<endl;
-        op[s1]={m1[s1][0],1};
+    map<string, pair<int, int>> op; //{uniqueID,depth}
+    for (auto p : conn)
+    {
+        cout << "Connected to " << p.first << " with unique-ID " << p.second.first << " on port " << p.second.second << endl;
     }
-    for(auto X:m2){
-        string s1=X.first;
-        if(strs.find(s1)!=strs.end()) continue;
-        sort(m2[s1].begin(),m2[s1].end());
-        //cout<<"Found "+s1+" at "+m2[s1][0]<<" with MD5 0 at depth 2"<<endl;
-        op[s1]={m2[s1][0],2};
+    for (auto X : m1)
+    {
+        string s1 = X.first;
+        strs.insert(s1);
+        sort(m1[s1].begin(), m1[s1].end());
+        // cout<<"Found "+s1+" at "+m1[s1][0]<<" with MD5 0 at depth 1"<<endl;
+        op[s1] = {m1[s1][0], 1};
+    }
+    for (auto X : m2)
+    {
+        string s1 = X.first;
+        if (strs.find(s1) != strs.end())
+            continue;
+        sort(m2[s1].begin(), m2[s1].end());
+        // cout<<"Found "+s1+" at "+m2[s1][0]<<" with MD5 0 at depth 2"<<endl;
+        op[s1] = {m2[s1][0], 2};
     }
     for(int i=0;i<req_files.size();i++){
-        string s1=req_files[i];
-        cout<<"Found "+s1<<" at "<<op[s1].first<<" with MD5 0 at depth "<<op[s1].second<<endl;
+        if(op.find(req_files[i])==op.end()){
+            op[req_files[i]]={0,0};
+        }
+    }
+    for (auto p:op)
+    {
+        string s1 = p.first;
+        cout << "Found " + s1 << " at " << p.second.first << " with MD5 0 at depth " << p.second.second << endl;
     }
     return;
 }
@@ -432,7 +473,7 @@ int main(int argc, char *argv[])
     for (int i = 0; i < nc; i++)
     {
         myfile >> adj[i].s_no >> adj[i].lis_port;
-        allns+=to_string(adj[i].lis_port)+",";
+        allns += to_string(adj[i].lis_port) + ",";
     }
     int nf;
     myfile >> nf;
@@ -452,11 +493,16 @@ int main(int argc, char *argv[])
             if (file->d_type == DT_REG)
             {
                 string s = file->d_name;
-                //cout << s << endl;
-                allfiles+=s;
-                allfiles+=",";
+                // cout << s << endl;
+                allfiles += s;
+                allfiles += ",";
                 this_node.files.push_back(s);
             }
+        }
+        sort(this_node.files.begin(), this_node.files.end());
+        for (string s1 : this_node.files)
+        {
+            cout << s1 << endl;
         }
     }
     thread th_server(server);
